@@ -7,7 +7,7 @@ import pydicom
 import warnings
 import pandas as pd
 
-def export_dicom_headers(dicom_dir, savedir, subject_dirs_target=None, max_dataset_size=float("inf")):
+def export_dicom_headers(dicom_dir, savedir, subject_dirs_target=None, max_dataset_size=float("inf"), encode_name=False):
   """Read selected header information from dicoms within a `dicom_dir` folder.
   
      The following first-level subfolders are expected:
@@ -26,7 +26,7 @@ def export_dicom_headers(dicom_dir, savedir, subject_dirs_target=None, max_datas
 
   Exports
   -------
-  dicom headers:  Exported individually for each subject with structure:
+  dicom headers:  If encode_name=True, exported individually for each subject with structure:
 
                   savedir/
                   |-----YYYY_MM_DD_FNLNS_dicoms_headers.csv
@@ -34,42 +34,66 @@ def export_dicom_headers(dicom_dir, savedir, subject_dirs_target=None, max_datas
                   
                   where YYYY = year, MM = month, DD = day refer to the acquisition date; FN=first name, LN=last mame, and S=sex.
 
+                  If encode_name=False, the entire name without sex will be used, i.e., YYYY_MM_DD_SubjectName_dicoms_headers.csv
+
   """
   os.makedirs(savedir, exist_ok=True)
 
   subject_dirs = sorted(glob.glob(os.path.join(dicom_dir, '*')))
 
   for subject_dir in subject_dirs:
-      if subject_dirs_target is not None:
-        if not any([os.path.basename(subject_dir)==subject_dir_n for subject_dir_n in subject_dirs_target]): continue
-      print('Reading:', os.path.basename(subject_dir))
-      
-      try:
-        dicoms_headers = make_dataset(dir=subject_dir, max_dataset_size=max_dataset_size)
-        
-        assert len(dicoms_headers.PatientName.unique()) == 1
-        assert len(dicoms_headers.PatientSex.unique()) == 1
-        assert len(dicoms_headers.StudyDate.unique()) == 1
-
-        PatientLastName, PatientFirstName = dicoms_headers.PatientName.unique().item().split(' ')[:2]
-        PatientSex = dicoms_headers.PatientSex.unique().item()
-        StudyDate = dicoms_headers.StudyDate.unique().item()
-        year, month, day = str(int(StudyDate[:4])), str(int(StudyDate[4:6])), str(int(StudyDate[6:]))
-
-        # PatientID should have format YYYY_MM_DD_FNLNS
-        PatientID = '_'.join([year, month, day, PatientFirstName[:2]+PatientLastName[:2]+PatientSex]).upper()
-
-        dicoms_headers['PatientID'] = PatientID
-        dicoms_headers.to_csv(os.path.join(savedir, PatientID + '_' + 'dicoms_headers.csv'))
-        print('Exported dicoms_headers.csv of shape', dicoms_headers.shape)
     
-      except:
-        warnings.warn('============== Could not read dicoms in folder %s =============== '%(subject_dir))
+    subject_folder = os.path.basename(subject_dir)
+    if subject_dirs_target is not None:
+      if not any([subject_folder==subject_dir_n for subject_dir_n in subject_dirs_target]): continue
+    print('Reading:', subject_folder)
 
-        
-def make_dataset(dir, max_dataset_size=float("inf")):
+   # try:
+    dicoms_headers_folder = make_dataset(dir=subject_dir, max_dataset_size=max_dataset_size)
+
+    # ideally there should be a single subject within each folder, but this is not always the case. One could 
+    # reject the folder altogether all try to remove the incorrectly named subject (e.g., `Retro Recon`)
+    for PatientName in dicoms_headers_folder.PatientName.unique():
+      dicoms_headers = dicoms_headers_folder[dicoms_headers_folder.PatientName==PatientName]
+
+      assert len(dicoms_headers.PatientName.unique()) == 1
+      assert len(dicoms_headers.PatientSex.unique()) == 1
+      assert len(dicoms_headers.StudyDate.unique()) == 1
+
+      if encode_name:
+        PatientSex = dicoms_headers.PatientSex.unique().item()
+        PatientLastName, PatientFirstName = dicoms_headers.PatientName.unique().item().split(' ')[:2]
+        PatientEncode = PatientFirstName[:2]+PatientLastName[:2]+PatientSex
+      else:
+        PatientEncode = dicoms_headers.PatientName.unique().item()
+
+      StudyDate = dicoms_headers.StudyDate.unique().item()
+      year, month, day = str(int(StudyDate[:4])), str(int(StudyDate[4:6])), str(int(StudyDate[6:]))
+
+      # PatientID should have format YYYY_MM_DD_FNLNS
+      PatientID = '_'.join([year, month, day, PatientEncode]).upper()
+
+      dicoms_headers['PatientID'] = PatientID
+      dicoms_headers.to_csv(os.path.join(savedir, PatientID + '_' + 'dicoms_headers.csv'))
+      print('Exported dicoms_headers.csv of shape', dicoms_headers.shape)
+
+      #except:
+      #  warnings.warn('============== Could not read dicoms in folder %s =============== '%(subject_folder))
+
+      
+def make_dataset(dir, max_dataset_size=float("inf"), 
+                 ext_exclude=['.json','.nii.gz', '.bvec', '.bval', '.DS_Store']):
   """ Create a pandas DataFrame containing header information from all dicoms withint a `dir`. 
       Header information includes the dicom `filename` and `PatientName` to facility querying and loading. 
+
+  Input
+  -----
+  dir : path of folder to search. 
+
+  max_dataset_size: int, the maximum amount of files to search. This is useful when testing the code.  
+
+  ext_exclude : list of strings indicating file extensions. This is useful to skip non-dicom files present in 
+                the folder. The default includes common extensions found along dicom files. 
 
   Returns
   -------
@@ -81,6 +105,7 @@ def make_dataset(dir, max_dataset_size=float("inf")):
   headers = pd.DataFrame(_init_header())
   for root, _, fnames in os.walk(dir):
       for fname in fnames:
+          if fname.endswith(tuple(ext_exclude)): continue
 
           is_valid, header = is_valid_dicom(os.path.join(root, fname))
 
@@ -115,6 +140,7 @@ def is_valid_dicom(filename):
     if 'InlineVF' in dicom.SeriesDescription: return True, 'InlineVF'
     # check images come primary  data (i.e., MR or CT scanners)
     if 'Secondary' in dicom.file_meta[0x0002, 0x0002].repval: return True, 'Secondary'
+
     
   except:
       return False, None
