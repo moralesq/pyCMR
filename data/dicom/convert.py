@@ -11,7 +11,7 @@ import nibabel as nib
 
 from . import folder 
 
-def export_niftis(headers_dir, 
+def _export_niftis(headers_dir, 
                    savedir,
                    SeriesDescriptionContainsTrues=[], 
                    SeriesDescriptionContainsFalse=[],
@@ -94,6 +94,7 @@ def export_niftis(headers_dir,
                     print('nifti shape:', sax_nifti.shape)
                     print('slices shape:', SliceLocations.shape)
 
+
 def read_cine_protocol(series_dicom_header):
     """" Read a cine protocol and convert to 4D NIFTI format. This function can fail if basic assumptions about 
          the cine acquisition are violated. 
@@ -111,7 +112,9 @@ def read_cine_protocol(series_dicom_header):
                      the niftis back to dicom (e.g., to generate segmentations!)
     """
     assert len(series_dicom_header.StudyInstanceUID.unique()) == 1, 'Trying to read dicoms from multiple studies!'
+    assert len(series_dicom_header.SpacingBetweenSlices.unique()) == 1
 
+    SpacingBetweenSlices = list(series_dicom_header.SpacingBetweenSlices)[0]
     SliceLocations = series_dicom_header.SliceLocation.unique()
     number_of_slices = len(SliceLocations) 
 
@@ -141,7 +144,10 @@ def read_cine_protocol(series_dicom_header):
 
     affine = read_affine(series_dicom_header.iloc[series_dicom_header.SliceLocation.argmin()])
 
-    return nib.Nifti1Image(sax_4D, affine=affine), dicom_4D_paths
+    sax_4D = nib.Nifti1Image(sax_4D, affine=affine), 
+    sax_4D.SpacingBetweenSlices = SpacingBetweenSlices
+
+    return sax_4D, dicom_4D_paths
 
 def _string_to_list_of_floats(x): return list(np.array(x.strip("'[].").split(','), dtype=float))
 

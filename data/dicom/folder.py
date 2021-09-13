@@ -188,6 +188,7 @@ def _init_header():
             'ImagePositionPatient':[],
             'SliceLocation':[], 
             'PixelSpacing':[], 
-            'SliceThickness':[]}
+            'SliceThickness':[], 
+            'SpacingBetweenSlices':[]}
 
   return header
